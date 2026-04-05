@@ -1,14 +1,10 @@
 import re
 import sys
+import pickle
 import nltk
-import joblib
-import pandas as pd
 from flask import Flask, request, jsonify
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
 
 # ─────────────────────────────────────────
 # DOWNLOAD NLTK DATA
@@ -17,7 +13,8 @@ nltk.download('stopwords', quiet=True)
 nltk.download('punkt', quiet=True)
 
 # ─────────────────────────────────────────
-# PREPROCESS
+# PREPROCESS (defined here so custom
+# unpickler can find it)
 # ─────────────────────────────────────────
 stemmer    = PorterStemmer()
 stop_words = set(stopwords.words('english'))
@@ -31,30 +28,28 @@ def preprocess(text):
     return ' '.join(tokens)
 
 # ─────────────────────────────────────────
-# TRAIN MODEL AT STARTUP
+# CUSTOM UNPICKLER — maps any module's
+# 'preprocess' to this module's preprocess
+# ─────────────────────────────────────────
+import io
+
+class CustomUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if name == 'preprocess':
+            return preprocess
+        return super().find_class(module, name)
+
+# ─────────────────────────────────────────
+# LOAD MODEL
 # ─────────────────────────────────────────
 app = Flask(__name__)
 
 try:
-    print("Training model...", flush=True)
-    df = pd.read_csv('SMSSpamCollection', sep='\t', names=['label', 'text'])
-    df['label_num'] = df['label'].map({'ham': 0, 'spam': 1})
-    df = df.drop_duplicates().reset_index(drop=True)
-
-    model = Pipeline([
-        ('tfidf', TfidfVectorizer(
-            preprocessor=preprocess,
-            max_features=10000,
-            ngram_range=(1, 2),
-            sublinear_tf=True
-        )),
-        ('clf', LogisticRegression(C=1.0, solver='lbfgs', max_iter=1000))
-    ])
-
-    model.fit(df['text'], df['label_num'])
-    print("✅ Model trained successfully", flush=True)
+    with open('spam_model.pkl', 'rb') as f:
+        model = CustomUnpickler(f).load()
+    print("✅ Model loaded successfully", flush=True)
 except Exception as e:
-    print(f"❌ Training failed: {e}", flush=True)
+    print(f"❌ Model load failed: {e}", flush=True)
     sys.exit(1)
 
 # ─────────────────────────────────────────
@@ -63,40 +58,40 @@ except Exception as e:
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'model': 'spam_detector_v1'}), 200
+    return {'status': 'ok', 'model': 'spam_detector_v1'}, 200
 
 
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json()
     if not data or 'text' not in data:
-        return jsonify({'error': 'Missing "text" field'}), 400
+        return {'error': 'Missing "text" field'}, 400
     text = data['text'].strip()
     if not text:
-        return jsonify({'error': 'Text cannot be empty'}), 400
+        return {'error': 'Text cannot be empty'}, 400
     prob  = model.predict_proba([text])[0][1]
     label = 'spam' if prob > 0.5 else 'ham'
-    return jsonify({
+    return {
         'label':      label,
         'confidence': round(float(prob), 4),
         'is_spam':    label == 'spam',
         'text':       text[:100]
-    }), 200
+    }, 200
 
 
 @app.route('/predict-batch', methods=['POST'])
 def predict_batch():
     data = request.get_json()
     if not data or 'texts' not in data:
-        return jsonify({'error': 'Missing "texts" field'}), 400
+        return {'error': 'Missing "texts" field'}, 400
     texts = data['texts']
     if not isinstance(texts, list) or len(texts) == 0:
-        return jsonify({'error': '"texts" must be a non-empty list'}), 400
+        return {'error': '"texts" must be a non-empty list'}, 400
     probs   = model.predict_proba(texts)[:, 1]
     results = [{'text': t[:100], 'label': 'spam' if p > 0.5 else 'ham',
                 'confidence': round(float(p), 4), 'is_spam': bool(p > 0.5)}
                for t, p in zip(texts, probs)]
-    return jsonify({'count': len(results), 'results': results}), 200
+    return {'count': len(results), 'results': results}, 200
 
 
 if __name__ == '__main__':
