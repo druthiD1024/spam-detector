@@ -1,15 +1,13 @@
-import re
 import joblib
 import pandas as pd
-from nltk.corpus import stopwords
-from nltk.stem import PorterStemmer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
+from model_utils import preprocess
 
 # ─────────────────────────────────────────
-# 1. LOAD & PREPROCESS
+# 1. LOAD DATA
 # ─────────────────────────────────────────
 print("=" * 50)
 print("LOADING & TRAINING FINAL MODEL")
@@ -19,17 +17,6 @@ df = pd.read_csv('SMSSpamCollection', sep='\t', names=['label', 'text'])
 df['label_num'] = df['label'].map({'ham': 0, 'spam': 1})
 df = df.drop_duplicates().reset_index(drop=True)
 
-stemmer    = PorterStemmer()
-stop_words = set(stopwords.words('english'))
-
-def preprocess(text):
-    text   = text.lower()
-    text   = re.sub(r'[^a-z\s]', '', text)
-    tokens = text.split()
-    tokens = [stemmer.stem(w) for w in tokens
-              if w not in stop_words and len(w) > 2]
-    return ' '.join(tokens)
-
 X = df['text']
 y = df['label_num']
 
@@ -38,7 +25,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # ─────────────────────────────────────────
-# 2. TRAIN FINAL PIPELINE (full training data)
+# 2. TRAIN
 # ─────────────────────────────────────────
 pipeline = Pipeline([
     ('tfidf', TfidfVectorizer(
@@ -54,53 +41,20 @@ pipeline.fit(X_train, y_train)
 print(f"Model trained on {len(X_train)} messages ✅")
 
 # ─────────────────────────────────────────
-# 3. SAVE MODEL
+# 3. SAVE
 # ─────────────────────────────────────────
-print("\n" + "=" * 50)
-print("SAVING MODEL")
-print("=" * 50)
-
-model_path = 'spam_model.pkl'
-joblib.dump(pipeline, model_path)
-print(f"Model saved → {model_path}")
-
-# Check file size
 import os
-size_kb = os.path.getsize(model_path) / 1024
-print(f"File size   → {size_kb:.1f} KB")
+joblib.dump(pipeline, 'spam_model.pkl')
+size_kb = os.path.getsize('spam_model.pkl') / 1024
+print(f"Model saved → spam_model.pkl ({size_kb:.1f} KB)")
 
 # ─────────────────────────────────────────
-# 4. VERIFY — LOAD BACK & PREDICT
+# 4. VERIFY
 # ─────────────────────────────────────────
-print("\n" + "=" * 50)
-print("VERIFYING — LOADING MODEL BACK")
-print("=" * 50)
+loaded = joblib.load('spam_model.pkl')
+test   = ["FREE prize click now!!!", "See you at lunch tomorrow"]
+for t in test:
+    prob = loaded.predict_proba([t])[0][1]
+    print(f"{'SPAM' if prob>0.5 else 'HAM'} ({prob*100:.1f}%) {t}")
 
-loaded_model = joblib.load(model_path)
-print(f"Model loaded successfully ✅")
-print(f"Model type: {type(loaded_model)}")
-
-test_emails = [
-    "Congratulations! You won a FREE $1000 prize! Click now!!!",
-    "Hi, are we still on for lunch tomorrow at 1pm?",
-    "URGENT: Your account is suspended. Verify immediately.",
-    "Can you send me the report by end of day?",
-    "FREE entry! Text WIN to 87121 now!"
-]
-
-print(f"\nPredictions from loaded model:")
-print("-" * 50)
-for email in test_emails:
-    prob  = loaded_model.predict_proba([email])[0][1]
-    label = '🚨 SPAM' if prob > 0.5 else '✅ HAM '
-    print(f"{label}  ({prob*100:5.1f}%)  {email[:55]}")
-
-print("\n" + "=" * 50)
-print("SUMMARY")
-print("=" * 50)
-print(f"  Model file    : spam_model.pkl")
-print(f"  Size          : {size_kb:.1f} KB")
-print(f"  Algorithm     : Logistic Regression + TF-IDF")
-print(f"  Ready to use  : joblib.load('spam_model.pkl')")
-
-print("\n✅ Model saved — ready for Step 6: Flask API")
+print("\n✅ Model saved successfully!")
