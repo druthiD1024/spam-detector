@@ -1,12 +1,19 @@
 import re
+import os
+import nltk
 import joblib
 from flask import Flask, request, jsonify
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 
 # ─────────────────────────────────────────
+# DOWNLOAD NLTK DATA (needed on Render)
+# ─────────────────────────────────────────
+nltk.download('stopwords', quiet=True)
+nltk.download('punkt', quiet=True)
+
+# ─────────────────────────────────────────
 # MUST define preprocess BEFORE loading model
-# (joblib needs it to deserialize the pipeline)
 # ─────────────────────────────────────────
 stemmer    = PorterStemmer()
 stop_words = set(stopwords.words('english'))
@@ -20,14 +27,14 @@ def preprocess(text):
     return ' '.join(tokens)
 
 # ─────────────────────────────────────────
-# 1. LOAD MODEL (once at startup)
+# LOAD MODEL (once at startup)
 # ─────────────────────────────────────────
 app   = Flask(__name__)
 model = joblib.load('spam_model.pkl')
 print("✅ Model loaded successfully")
 
 # ─────────────────────────────────────────
-# 2. ROUTES
+# ROUTES
 # ─────────────────────────────────────────
 
 @app.route('/health', methods=['GET'])
@@ -39,7 +46,6 @@ def health():
 def predict():
     data = request.get_json()
 
-    # Validate input
     if not data or 'text' not in data:
         return jsonify({'error': 'Missing "text" field in request body'}), 400
 
@@ -47,15 +53,14 @@ def predict():
     if not text:
         return jsonify({'error': 'Text cannot be empty'}), 400
 
-    # Predict
-    prob  = model.predict_proba([text])[0][1]   # spam probability
+    prob  = model.predict_proba([text])[0][1]
     label = 'spam' if prob > 0.5 else 'ham'
 
     return jsonify({
         'label':      label,
         'confidence': round(float(prob), 4),
         'is_spam':    label == 'spam',
-        'text':       text[:100]                 # echo back (truncated)
+        'text':       text[:100]
     }), 200
 
 
@@ -70,7 +75,7 @@ def predict_batch():
     if not isinstance(texts, list) or len(texts) == 0:
         return jsonify({'error': '"texts" must be a non-empty list'}), 400
 
-    probs  = model.predict_proba(texts)[:, 1]
+    probs   = model.predict_proba(texts)[:, 1]
     results = []
     for text, prob in zip(texts, probs):
         results.append({
@@ -80,18 +85,12 @@ def predict_batch():
             'is_spam':    bool(prob > 0.5)
         })
 
-    return jsonify({
-        'count':   len(results),
-        'results': results
-    }), 200
+    return jsonify({'count': len(results), 'results': results}), 200
 
 
 # ─────────────────────────────────────────
-# 3. RUN
+# RUN
 # ─────────────────────────────────────────
 if __name__ == '__main__':
     print("🚀 Starting Spam Detector API...")
-    print("   GET  http://localhost:5000/health")
-    print("   POST http://localhost:5000/predict")
-    print("   POST http://localhost:5000/predict-batch")
     app.run(debug=True, port=5000)
